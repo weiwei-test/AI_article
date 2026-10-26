@@ -178,7 +178,6 @@ class Client:
         except OSError:
             pass  # caching is a convenience only
 
-
     # -- JSON-RPC ------------------------------------------------------------
     @staticmethod
     def _session_expired(error: dict) -> bool:
@@ -474,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
             method = request.get("method")
             if not method:
                 raise SystemExit("raw 载荷必须包含 method")
+            client.ensure()
             result = client._rpc(method, request.get("params"))
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
