@@ -303,6 +303,19 @@ class Client:
 def _render(result: dict, *, as_json: bool, image_dir: str | None, tool: str) -> int:
     """Print a tools/call result; return the process exit code."""
     if as_json:
+        # 工具正文常是 JSON 字符串（bridge_info / project_info 等）：
+        # 能解析就直接输出 payload，方便 `| jq`；否则退回原始 result。
+        texts = [
+            item.get("text", "")
+            for item in result.get("content") or []
+            if item.get("type") == "text"
+        ]
+        if len(texts) == 1:
+            try:
+                print(json.dumps(json.loads(texts[0]), ensure_ascii=False, indent=2))
+                return 1 if result.get("isError") else 0
+            except json.JSONDecodeError:
+                pass
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if result.get("isError") else 0
 
@@ -379,7 +392,10 @@ def main(argv: list[str] | None = None) -> int:
         target.add_argument("--url", default=default, help="覆盖 MCP 端点")
         target.add_argument("--timeout", type=float, default=default, help="单次请求超时秒数")
         target.add_argument(
-            "--json", action="store_true", default=default, help="输出原始 JSON-RPC result"
+            "--json",
+            action="store_true",
+            default=default,
+            help="结构化输出（工具正文可解析为 JSON 时直接输出 payload）",
         )
         target.add_argument(
             "--image-dir", default=default, help="把返回的图片内容解码保存到该目录，并打印路径"

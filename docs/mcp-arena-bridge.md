@@ -12,7 +12,7 @@
 | Endpoint | `https://illa-nonblockaded-direly.ngrok-free.dev/mcp/BXRDvBj3jPUXZOVFew4bl3zuO5KCiwTo` |
 | 传输 | Streamable HTTP（只支持 POST） |
 | 协议版本 | `2025-06-18` |
-| 服务端 | `arena-bridge` **0.5.2**，buildId `20261023-save-image.1`，backend `vscode-node`，pid 8290，端口 8765 |
+| 服务端 | `arena-bridge` **0.5.2**，buildId `20261023-save-image.1`，backend `vscode-node`，端口 8765（pid 首次连接 8290，17:06 重启后 59176） |
 | 当前工作区 | `/Users/shiwei/Arena2api-fixed-main/arena-bridge-vscode`（5044 个文件，**不是 git 仓库**） |
 | 可切换范围 | `list_workspaces` 显示：`/Users/weiwei` 下任意项目 |
 | 权限 | write ✅ exec（非沙箱）✅ home ✅ network ✅ browser ✅，页面可变（allowMutations）✅ |
@@ -226,6 +226,7 @@ python3 scripts/mcp_client.py call read_file '{"path":"src/version.ts"}'
 python3 scripts/mcp_client.py call multi_edit @/tmp/edits.json
 echo '{"query":"Tunnel"}' | python3 scripts/mcp_client.py call search_workspace_symbols -
 python3 scripts/mcp_client.py call run_command '{"command":"npm test","wait_sec":60}' --json
+python3 scripts/mcp_client.py call bridge_info --json | jq '{version, processId, workspaceRoot}'
 
 python3 scripts/mcp_client.py --image-dir /tmp/shots call browser_screenshot '{"format":"jpeg"}'
 python3 scripts/mcp_client.py raw '{"method":"ping"}'
@@ -235,7 +236,7 @@ python3 scripts/mcp_client.py raw '{"method":"ping"}'
 | --- | --- |
 | `--url` / `ARENA_MCP_URL` | 覆盖端点（换隧道/换工作区） |
 | `--timeout` / `ARENA_MCP_TIMEOUT` | 单请求超时，默认 120s |
-| `--json` | 打印完整 JSON-RPC result（含 `isError`） |
+| `--json` | 结构化输出：工具正文能解析成 JSON 就直接输出 payload（`| jq` 友好），否则输出完整 JSON-RPC result |
 | `--image-dir DIR` | 把 image 内容解码落盘（默认只打印占位） |
 | `ARENA_MCP_SESSION_FILE` | 会话缓存路径，默认 `/tmp/arena_mcp_session.json` |
 | 退出码 | `0` 成功 / `1` 工具或服务端错误（`isError=true`）/ `2` 用法错误 |
@@ -301,14 +302,19 @@ VS Code / Cline 的 `mcp_settings.json`（或同类支持 Streamable HTTP 的客
 | `tools/list` | ✅ 49 个工具，与 `bridge_info.tools` 一致 |
 | `bridge_info` / `project_info` | ✅ 权限 write/exec/home/network/browser 全开 |
 | `list_files` / `read_file` / `get_symbols` | ✅ 5044 文件；`src/version.ts` 3 行；`tunnel.ts` 62 符号 |
-| `run_command` + 会话 | ✅ `node -v` → v22.23.1，exit=0，session `cmd296-71b982` |
+| `run_command` + 会话 | ✅ `node -v && pwd` → v22.23.1 / 工作区路径，exit=0（session `cmd1-614ef5`） |
 | `git_status` | ⚠️ 非 git 仓库（128），已记录规避方式 |
 | `browser_status` / `browser_screenshot` | ✅ Chrome 155，4 标签页；JPEG 1100x594 35KB 落盘 |
 | `web_fetch` | ✅ example.com 200 转纯文本 |
-| `save_image` | ⏸ 未实调（避免向用户工作区写测试文件），参数与限制已记录 |
-| 写入类（write/edit/delete/rename/git_commit） | ⏸ 未实调（不做无授权的破坏性测试） |
+| **写入链路**（write→edit→apply_patch→read→delete） | ✅ 探针文件 `.arena-probe/mcp-smoke.txt`：新建 17 字符 → 替换 1 处 → 补丁改 1 行（`beta-patched`）→ 读回 4 行 → 删除；`restore_backup` 能看到该文件备份，删除后读到 `文件不存在`，工作区无残留 |
+| `get_diagnostics` | ✅ 返回「没有诊断信息」快照提示 |
+| `find_references` | ✅ 正常返回 |
+| `search_workspace_symbols` | ❌ 20s 超时（5044 文件工作区 LSP 索引慢，会被 ngrok 切断），实战改用 `search_code`/`find_files` |
+| `save_image` / `rename_symbol` / `git_commit` | ⏸ 未实调（避免无授权改动用户仓库内容） |
 
-**连接中途掉线（外部原因，已复现并记录）**：16:56–16:58 全部读写/命令/浏览器调用正常；16:59 起同一端点返回 `404 ERR_NGROK_3200 endpoint is offline`，说明用户侧 tunnel/扩展停了，与本仓库客户端无关。恢复步骤见第 6 节，`scripts/mcp_client.py wait` 可在恢复瞬间自动接上。
+
+**连接中途掉线并已自动恢复（实证）**：16:56–16:58 全部调用正常；16:59 起同一端点变成 `404 ERR_NGROK_3200 endpoint is offline`（用户侧 tunnel/扩展停了，与客户端无关）；17:06:21 后台 `wait` 探针捕获到恢复（新 pid 59176），随后 `bridge_info`/`tools/list`(49)/`read_file`/`run_command`/写链路全部复测通过。结论：**掉线只需重启 Arena Bridge，客户端无需改动；URL 变化则用 `ARENA_MCP_URL` 覆盖。**
+
 
 **已知性能注意**：`search_workspace_symbols`（LSP 全库索引）首次调用可能超过 ngrok 网关容忍时间并触发 `ERR_NGROK_3004`；此时优先用 `search_code` + `glob` 或 `find_files`，等 LSP 索引预热后再用语义工具。
 
