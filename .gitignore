@@ -25,3 +25,6 @@ release
 *.njsproj
 *.sln
 *.sw?
+
+# MCP 探测临时文件（本地脚手架，不入库）
+.mcp-probe/
