@@ -15,10 +15,12 @@ import sys
 
 from docx import Document
 from docx.enum.section import WD_SECTION
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ROW_HEIGHT_RULE
+from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
+
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DAY = "2026-10-29"
@@ -168,6 +170,9 @@ def table(doc, headers, rows, widths=None, font_size=8.5):
             if r_i % 2 == 1:
                 shade(cells[c_i], "F2F5FD")
     if widths:
+        # 必须同时设 gridCol 与 tcW，否则固定布局下 Word 仍按等宽 tblGrid 渲染
+        for i, w in enumerate(widths):
+            t.columns[i].width = Cm(w)
         for row in t.rows:
             for i, w in enumerate(widths):
                 row.cells[i].width = Cm(w)
@@ -207,6 +212,64 @@ def image(doc, path, caption, max_w=15.5):
 # --------------------------------------------------------------------------
 # 正文
 # --------------------------------------------------------------------------
+def image_slot(doc, caption, w=15.5, h=9.0, hint="在框内粘贴截图"):
+    """无图版：留一个虚线取景框，供本人在 Word 里手动粘贴截图。"""
+    t = doc.add_table(rows=1, cols=1)
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    t.autofit = False
+    tblPr = t._tbl.tblPr
+    # 按 OOXML 顺序插入 tblBorders（必须在 tblLayout / tblCellMar / tblLook 之前）
+    borders = tblPr.makeelement(qn("w:tblBorders"), {})
+    for edge in ("top", "left", "bottom", "right"):
+        borders.append(borders.makeelement(qn("w:" + edge), {
+            qn("w:val"): "dashed", qn("w:sz"): "8",
+            qn("w:space"): "0", qn("w:color"): "AEB6CC",
+        }))
+    for edge in ("insideH", "insideV"):
+        borders.append(borders.makeelement(qn("w:" + edge), {
+            qn("w:val"): "none", qn("w:sz"): "0",
+            qn("w:space"): "0", qn("w:color"): "auto",
+        }))
+    anchor = None
+    for tag in ("w:shd", "w:tblLayout", "w:tblCellMar", "w:tblLook"):
+        anchor = tblPr.find(qn(tag))
+        if anchor is not None:
+            break
+    if anchor is not None:
+        anchor.addprevious(borders)
+    else:
+        tblPr.append(borders)
+
+    row = t.rows[0]
+    row.height = Cm(h)
+    row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+
+    cell = row.cells[0]
+    cell.width = Cm(w)
+    t.columns[0].width = Cm(w)
+    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+
+
+    p = cell.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(2)
+    set_font(p.add_run(hint), size=9, color=RGBColor(0x8A, 0x92, 0xA8))
+    p2 = cell.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p2.paragraph_format.space_before = Pt(0)
+    p2.paragraph_format.space_after = Pt(2)
+    set_font(p2.add_run(f"（约 {w:.1f} × {h:.1f} cm，粘贴后框会自动撑开）"),
+             size=8, color=RGBColor(0xA8, 0xAE, 0xC0))
+
+    cp = doc.add_paragraph()
+    cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    cp.paragraph_format.space_before = Pt(4)
+    cp.paragraph_format.space_after = Pt(12)
+    set_font(cp.add_run(caption), size=9, color=GREY)
+    return False
+
+
 def build():
     doc = Document()
 
@@ -249,9 +312,10 @@ def build():
     rich(doc, [
         ("完成度：", True, None),
         ("三项全部按计划完成，MCP 侧已实测可用并交付文档（1 份 157 行说明 + 1 条独立分支提交）；", False, None),
-        ("遗留 1 项：", True, RGBColor(0xC0, 0x00, 0x00)),
-        ("今日日报所需的 3 张过程截图需由本人从本地补入 images/ 目录后重新生成终版（正文已就绪，脚本可一键重跑）。", False, None),
+        ("待办 1 项：", True, RGBColor(0xC0, 0x00, 0x00)),
+        ("本报告为无图版，第五节已按工作顺序预留 3 个截图取景框并排好图注，由本人把截图直接粘贴入框即可定稿。", False, None),
     ])
+
 
     # ---------------- 1. MCP 接入 ----------------
     h1(doc, "二、主要工作内容")
@@ -378,14 +442,14 @@ def build():
               ["4", "命令执行不是沙箱，权限全开", "误操作直接影响真机", "破坏性命令先确认；写入 / 删除依赖自动备份"],
               ["5", "第三方免费额度数字不可信", "按错误数字做容量规划",
                "改为以产品页实时余额为准，第三方榜单仅作线索"],
-              ["6", "日报终版缺 3 张过程截图（图像字节未落入工作区）", "文档不完整",
-               "将截图补入 2026-10-29/images/ 后重跑脚本，一键生成终版"],
+              ["6", "过程截图未随文档自动归档（图像字节未落入工作区）", "归档件缺图",
+               "第五节已预留 3 个取景框与图注，粘贴截图即可定稿"],
           ],
-          widths=[1.3, 5.4, 4.4, 5.5])
+          widths=[1.2, 5.0, 4.4, 5.2])
 
     # ---------------- 四、明日计划 ----------------
     h1(doc, "四、明日计划（10 月 30 日）")
-    numbered(doc, 1, "补齐并归档今日 3 张过程截图，输出日报终版交部门归档。")
+    numbered(doc, 1, "把 3 张过程截图粘贴进日报取景框并定稿，交部门归档。")
     numbered(doc, 2, "MCP 侧：为远端工作区补 git init 与 .gitignore，把「自动备份 + 提交规范」补齐，消除无回滚风险。")
     numbered(doc, 3, "MCP 侧：把 12 条硬约束写入团队 AGENTS 规则文件，让接手人不必读文档也能照做。")
     numbered(doc, 4, "Cline Cloud：用一个真实的小需求做端到端试点（派单 → 云沙箱 → 分支 / PR），评估是否纳入常规交付流程。")
@@ -393,7 +457,7 @@ def build():
 
     # ---------------- 五、附件 ----------------
     h1(doc, "五、过程截图")
-    para(doc, "以下截图按工作发生顺序排列，均已同步保存至 2026-10-29/images/ 目录。",
+    para(doc, "以下截图按工作发生顺序排列。请把对应截图直接粘贴进虚线框，图注与编号已排好。",
          size=9, color=GREY, indent=0.74, space_after=4)
 
     shots = [
@@ -416,14 +480,20 @@ def build():
                 extra = sorted(glob.glob(os.path.join(IMG_DIR, stem + ".*")))
                 if extra:
                     path = extra[0]
-        if image(doc, path, cap):
-            found += 1
+        if os.path.exists(path):
+            if image(doc, path, cap):
+                found += 1
+        else:
+            image_slot(doc, cap)
 
     if found < len(shots):
-        para(doc,
-             f"注：当前目录内识别到 {found} / {len(shots)} 张截图，缺失位置以红色占位标注。"
-             f"补齐 {IMG_DIR} 后执行 python3 tools/build_daily_report.py 即可重新生成本文件。",
-             size=9, color=RGBColor(0xC0, 0x00, 0x00), indent=0.74)
+        note = ("注：" if found else "说明：") + (
+            f"本节共预留 {len(shots)} 个截图位（当前已嵌入 {found} 张）。"
+            "将截图直接粘贴进虚线框即可，框体为「最小高度」会自动撑开，"
+            "图注已排好无需调整；粘贴完成后删除框内两行灰色提示文字即可。"
+        )
+        para(doc, note, size=9, color=GREY, indent=0.74)
+
 
     # ---------------- 页脚 ----------------
     fp = sec.footer.paragraphs[0]
